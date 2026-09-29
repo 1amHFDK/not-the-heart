@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>кохаю тебе</title>
+
+<style>
+    * { box-sizing: border-box; }
+
+    html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    canvas {
+        display: block;
+        width: min(100vw, 100vh);
+        height: min(100vw, 100vh);
+        aspect-ratio: 1 / 1;
+    }
+</style>
+</head>
+
+<body>
+<canvas id="canvas"></canvas>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+
+// ============================================================
+// НАСТРОЙКИ
+// ============================================================
+
+// Более яркий нежно-голубой
+const COLOR = "#c9f6ff";
+
+// Размер текста
+const FONT_SIZE = 12;
+
+// Плавность появления
+const FADE_SPEED = 3.2;
+
+// Размер сердца
+const HEART_SIZE = 20;
+
+
+// ============================================================
+// CANVAS
+// ============================================================
+
+let width;
+let height;
+
+function resize() {
+    const size = Math.min(window.innerWidth, window.innerHeight);
+    width = canvas.width = size;
+    height = canvas.height = size;
+}
+
+resize();
+window.addEventListener("resize", resize);
+
+
+// ============================================================
+// ФОРМУЛА СЕРДЦА
+// ============================================================
+
+function heart(t) {
+    const x =
+        16 * Math.pow(Math.sin(t), 3);
+
+    const y =
+        13 * Math.cos(t)
+        - 5 * Math.cos(2 * t)
+        - 2 * Math.cos(3 * t)
+        - Math.cos(4 * t);
+
+    return {
+        x: x * HEART_SIZE,
+        y: -y * HEART_SIZE
+    };
+}
+
+
+// ============================================================
+// СОЗДАЁМ ТОЧНЫЙ КОНТУР
+// ============================================================
+
+const POINTS = 10000;
+const path = [];
+
+let totalLength = 0;
+
+// Точный визуальный центр сердца по его границам.
+let minHeartY = Infinity;
+let maxHeartY = -Infinity;
+
+for (let i = 0; i < POINTS; i++) {
+    const t = (i / POINTS) * Math.PI * 2;
+    const p = heart(t);
+
+    path.push({
+        x: p.x,
+        y: p.y,
+        length: 0
+    });
+
+    minHeartY = Math.min(minHeartY, p.y);
+    maxHeartY = Math.max(maxHeartY, p.y);
+}
+
+for (let i = 1; i < POINTS; i++) {
+    const dx = path[i].x - path[i - 1].x;
+    const dy = path[i].y - path[i - 1].y;
+
+    totalLength += Math.sqrt(dx * dx + dy * dy);
+    path[i].length = totalLength;
+}
+
+const heartCenterY = (minHeartY + maxHeartY) / 2;
+
+const last = path[POINTS - 1];
+const first = path[0];
+
+totalLength += Math.sqrt(
+    Math.pow(last.x - first.x, 2) +
+    Math.pow(last.y - first.y, 2)
+);
+
+
+// ============================================================
+// ПОЛУЧИТЬ ТОЧКУ ПО ДЛИНЕ КОНТУРА
+// ============================================================
+
+function getPoint(distance) {
+    distance =
+        ((distance % totalLength) + totalLength)
+        % totalLength;
+
+    let left = 0;
+    let right = POINTS - 1;
+
+    while (left < right) {
+        const middle = Math.floor((left + right) / 2);
+
+        if (path[middle].length < distance) {
+            left = middle + 1;
+        } else {
+            right = middle;
+        }
+    }
+
+    const index = left;
+
+    if (index === 0) {
+        return {
+            x: path[0].x,
+            y: path[0].y
+        };
+    }
+
+    const a = path[index - 1];
+    const b = path[index];
+
+    const section = b.length - a.length;
+
+    if (section === 0) {
+        return {
+            x: a.x,
+            y: a.y
+        };
+    }
+
+    const progress =
+        (distance - a.length) / section;
+
+    return {
+        x: a.x + (b.x - a.x) * progress,
+        y: a.y + (b.y - a.y) * progress
+    };
+}
+
+
+// ============================================================
+// БЕСКОНЕЧНЫЙ ПОТОК ФРАЗ
+// ============================================================
+
+// Текст теперь длиннее
+const TEXT = "я кохаю тебе";
+
+// Расстояние между соседними фразами.
+// Меньше предыдущего значения.
+const WORD_GAP = 30;
+
+// Новая фраза появляется быстро и непрерывно.
+const SPAWN_DELAY = 147;
+
+// Каждый новый полный круг немного расширяется.
+// Получается последовательность:
+// сердце -> чуть большее сердце -> ещё чуть большее...
+const RING_GROWTH = 0.018;
+
+// Сколько фраз примерно помещается на одном круге.
+// Рассчитывается после создания контура.
+let WORDS_PER_RING = 1;
+
+const words = [];
+
+let spawnTimer = 0;
+let nextWordIndex = 0;
+
+
+// ============================================================
+// СОЗДАНИЕ ФРАЗЫ
+// ============================================================
+
+function createWord() {
+
+    const ring =
+        Math.floor(nextWordIndex / WORDS_PER_RING);
+
+    const indexInRing =
+        nextWordIndex % WORDS_PER_RING;
+
+    /*
+     * Каждый новый круг начинается снизу сердца.
+     * После полного круга следующий слой чуть
+     * расширяется вокруг той же центральной оси.
+     */
+
+    const distance =
+        totalLength / 2 +
+        indexInRing * WORD_GAP;
+
+    words.push({
+        distance: distance,
+
+        // Номер "слоя" сердца
+        ring: ring,
+
+        // Плавное появление
+        opacity: 0
+    });
+
+    nextWordIndex++;
+}
+
+
+// ============================================================
+// АНИМАЦИЯ
+// ============================================================
+
+let previousTime = performance.now();
+
+function animate(currentTime) {
+
+    const delta =
+        (currentTime - previousTime) / 1000;
+
+    previousTime = currentTime;
+
+    ctx.clearRect(
+        0,
+        0,
+        width,
+        height
+    );
+
+
+    // --------------------------------------------------------
+    // БЕСКОНЕЧНО ДОБАВЛЯЕМ НОВЫЕ ФРАЗЫ
+    // --------------------------------------------------------
+
+    spawnTimer += delta * 1000;
+
+    while (spawnTimer >= SPAWN_DELAY) {
+
+        createWord();
+
+        spawnTimer -= SPAWN_DELAY;
+    }
+
+
+    // --------------------------------------------------------
+    // НАСТРОЙКИ ТЕКСТА
+    // --------------------------------------------------------
+
+    ctx.font =
+        `bold ${FONT_SIZE}px Arial`;
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    const centerX = width / 2;
+    const centerY = height / 2;
+
+
+    // --------------------------------------------------------
+    // РИСУЕМ ВСЕ КРУГИ
+    // --------------------------------------------------------
+
+    for (const word of words) {
+
+        // Плавное появление
+        word.opacity +=
+            FADE_SPEED * delta;
+
+        if (word.opacity > 1) {
+            word.opacity = 1;
+        }
+
+
+        // ----------------------------------------------------
+        // КАЖДЫЙ НОВЫЙ КРУГ ЧУТЬ ДАЛЬШЕ ОТ ЦЕНТРА
+        // ----------------------------------------------------
+
+        const scale =
+            1 +
+            word.ring * RING_GROWTH;
+
+
+        const point =
+            getPoint(word.distance);
+
+
+        const x =
+            centerX +
+            point.x * scale;
+
+        const y =
+            centerY +
+            (point.y - heartCenterY) * scale;
+
+
+        ctx.save();
+
+        ctx.globalAlpha =
+            word.opacity;
+
+
+        // ----------------------------------------------------
+        // МЯГКОЕ НЕОНОВОЕ СВЕЧЕНИЕ
+        // ----------------------------------------------------
+
+        ctx.shadowColor =
+            COLOR;
+
+        ctx.shadowBlur = 10;
+
+        ctx.fillStyle =
+            COLOR;
+
+        ctx.fillText(
+            TEXT,
+            x,
+            y
+        );
+
+
+        // Чёткое светлое ядро текста
+        ctx.shadowBlur = 2;
+
+        ctx.fillStyle =
+            "#efffff";
+
+        ctx.fillText(
+            TEXT,
+            x,
+            y
+        );
+
+
+        ctx.restore();
+    }
+
+
+    requestAnimationFrame(animate);
+}
+
+
+// ============================================================
+// ПОКАЗЫВАЕМ ПЕРВУЮ ФРАЗУ СНИЗУ
+// ============================================================
+
+WORDS_PER_RING =
+    Math.max(
+        1,
+        Math.floor(totalLength / WORD_GAP)
+    );
+
+requestAnimationFrame(animate);
+
+
+</script>
+</body>
+</html>
